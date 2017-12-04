@@ -81,7 +81,9 @@ object Form1: TForm1
         
           'For Change File DateTime, this will change Creation, Modified an' +
           'd Accessed '
-        'date to the date/time speicified... Can use 24hr time or AM/PM.'
+        
+          'date to the date/time speicified... Can use 24hr time or AM/PM o' +
+          'r NOW.'
         
           'NOTE: if the file is an image, Windows will display the Date Tak' +
           'en if that'
@@ -89,7 +91,6 @@ object Form1: TForm1
         'Can use <01> in string. ZB: 12/22/2017 13:<01>:01  ')
       ScrollBars = ssBoth
       TabOrder = 0
-      ExplicitTop = 7
     end
     object Panel2: TPanel
       Left = 0

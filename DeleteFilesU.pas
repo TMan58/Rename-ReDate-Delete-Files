@@ -520,6 +520,8 @@ begin // procedure TForm1.DeleteOneFile;
       if rdMode = rdChangeFileTime then
       begin
         sSuffix := edAppendToFilename.Text;
+        if CompareText(sSuffix, 'Now')=0 then
+           sSuffix := DateTimeToStr(Now);
         DoIncrement(sSuffix, bIncIndex, iIndex, sIncSuffix);
         if Length(sIncSuffix)>0 then
           sSuffix := sIncSuffix;
