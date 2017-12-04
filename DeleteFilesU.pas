@@ -7,7 +7,7 @@ uses
   Dialogs, ExtCtrls, StdCtrls, Buttons, ComCtrls;
 
 Type
-  TRDMode = (rdNone, rdPrefix, rdAppend, rdRemove, rdReplace, rdDelete);
+  TRDMode = (rdNone, rdPrefix, rdAppend, rdRemove, rdReplace, rdRename, rdChangeFileTime, rdDelete);
 type
   TForm1 = class(TForm)
     StatusBar1: TStatusBar;
@@ -53,6 +53,12 @@ type
     bClosing: Boolean;
     rdMode: TrdMode;
     csAppendToFilenameOriginal: String;
+    sIncSuffix: String;
+    iIndex: Integer;
+    bIncIndex: boolean;
+    bIncIndexR: Boolean;
+    sIncReplace: string;
+    iIndexReplace: integer;
     procedure DeleteOneFile;
     property sStatusBar: String write SetStatusBar;
     property sStatus: String  read GetStatus write SetStatus;
@@ -63,7 +69,7 @@ var
 
 implementation
 Uses
-  ShellAPI;
+ DateUtils,  ShellAPI;
 {$R *.dfm}
 
 procedure TForm1.WndProc(var Msg: TMessage);
@@ -159,6 +165,8 @@ begin
 end;
 
 procedure TForm1.btnDoItClick(Sender: TObject);
+var
+  lstTemp: TStringList;
 begin
   UpdateCaption;
   Timer1.Interval := StrToInt(Trim(edTimer.Text));
@@ -167,14 +175,29 @@ begin
   iFilesNotFoundCount := 0;
   iErr := 0;
   sError := '';
+  sIncSuffix := '';
+  iIndex := 0;
+  bIncIndex := False;
+  bIncIndexR := False;
+  sIncReplace := '';
+  iIndexReplace := 0;
   edStatus.Clear;
   btnAbort.Enabled := True;
   btnDoIt.Enabled := False;
+
+  lstTemp := TStringList.Create;
+  lstTemp.Assign(edDeleteFiles.Lines);
+  lstTemp.Sort;
+  edDeleteFiles.Lines.Assign(lstTemp);
+  FreeAndNil(lstTemp);
+
   dtStartTime := Now;
   Timer1.Enabled := True;
 end;
 
 procedure TForm1.cbxAppendToFilename1Click(Sender: TObject);
+var
+  sTemp: String;
 begin
   if rgMode.ItemIndex = -1 then
     exit;
@@ -182,7 +205,18 @@ begin
   edAppendToFIlename.EditLabel.Caption := csAppendToFilenameOriginal;
   // edAppendToFilename.Enabled := cbxAppendToFilename.Checked OR cbxPrePend.Checked OR cbxRemoveString.Checked;
   edReplaceWithFilename.Enabled := False;
-  edAppendToFilename.Enabled := rdMode in [rdAppend, rdPrefix, rdRemove, rdReplace];
+  edAppendToFilename.Enabled := rdMode in [rdAppend, rdPrefix, rdRemove, rdReplace, rdRename, rdChangeFileTime];
+  case rdMode of
+    rdNone: sTemp := csAppendToFIlenameOriginal;
+    rdPrefix: sTemp := 'Prefix filename:';
+    rdAppend: sTemp := 'Append filename:';
+    rdRemove: sTemp := 'Remove filename:';
+    rdReplace: sTemp := 'Find filename:';
+    rdRename: sTemp := 'Rename files:';
+    rdChangeFileTime: sTemp := 'Change file DateTime:';
+    rdDelete: sTemp := 'DELETING ALL FILES';
+  end;
+  edAppendToFIlename.EditLabel.Caption := sTemp;
   if rdMode = rdReplace then
   begin
     edAppendToFilename.EditLabel.Caption := 'Find String';
@@ -209,13 +243,148 @@ begin
   end;
 end;
 
+// http://www.delphigroups.info/2/0f/484890.html
+const
+  // 24 * 60 * 60 * 1000 * 1000 * 10;
+  CentiMicroSecondsPerDay = 864000000000.0;
+  FileTimeStart = -109205;  // 1601-01-01T00:00:00
+function DateTimeToLocalFileTime(Value: TDateTime): TFileTime; 
+begin 
+  Int64(Result) := Round((Value - FileTimeStart) * 
+                   CentiMicroSecondsPerDay); 
+end; 
+function LocalFileTimeToDateTime(Value: TFileTime): TDateTime; 
+begin 
+  Result := (Int64(Value) / CentiMicroSecondsPerDay) + FileTimeStart; 
+end;
+const
+  FILE_WRITE_ATTRIBUTES = $0100;
+procedure SetFileCreationTime(const FileName: string; const DateTime: TDateTime);
+var
+  Handle: THandle;
+  SystemTime: TSystemTime;
+  FileTime: TFileTime;
+  LocalFileTime: TFileTime;
+  iTime: Integer;
+  Result: Boolean;
+begin
+  Handle := CreateFile(PChar(FileName), FILE_WRITE_ATTRIBUTES,
+    FILE_SHARE_READ or FILE_SHARE_WRITE, nil, OPEN_EXISTING,
+    FILE_ATTRIBUTE_NORMAL, 0);
+  if Handle=INVALID_HANDLE_VALUE then
+    RaiseLastOSError;
+  try
+
+
+    LocalFileTime := DateTimeToLocalFileTime(DateTime);
+    Result := LocalFileTimeToFileTime(LocalFileTime, FileTime);
+    if Result then
+    Begin
+//    IncHour(DateTime, -5);
+    DateTimeToSystemTime(DateTime, SystemTime);
+
+//    iTime := DateTimeToFileDate(DateTime);
+//  if not (DosDateTimeToFileTime(LongRec(iTime).Hi, LongRec(iTime).Lo,
+//      LocalFileTime) and
+//          LocalFileTimeToFileTime(LocalFileTime, FileTime)) then
+//    Exit;
+
+    if not SystemTimeToFileTime(SystemTime, FileTime) then
+      RaiseLastOSError;
+    if not SetFileTime(Handle, @FileTime, @FileTime, @FileTime) then
+      RaiseLastOSError;
+    End
+    else
+      RaiseLastOSError;
+  finally
+    CloseHandle(Handle);
+  end;
+end;
+
+
 procedure TForm1.DeleteOneFile;
 var
   sFile: String;
   sNewFile: String;
   sSuffix: String;
+  sReplaceText: String;
+//  sIncSuffix: String;
+  sTemp: String;
   sPath: String;
-  p1: integer;
+  sIndex: String;
+//  iIndex: Integer;
+//  bIncIndex: boolean;
+  p1, p2: integer;
+  dtNewDateTime: TDateTime;
+// Sets sNewFile
+procedure ModeRemove;
+begin
+  p1 := Pos(sSuffix, sNewFile);
+  if bIncIndex then
+    p1 := Pos(sIncSuffix, sNewFile);
+  if p1>0 then
+  begin
+    if NOT bIncIndex then
+      Delete(sNewFile, p1, Length(sSuffix))
+    else
+      Delete(sNewFile, p1, Length(sIncSuffix));
+  end
+  else
+  begin
+    iErr := GetLastError;
+    Inc(iErrorCount);
+    sError := Format('Error String not in File: [%d] %s', [iErr, SysErrorMessage(iErr)]);
+    sStatus := sError;
+    sStatus := Format('     %s', [sFile]); // adds filename to status list
+    edDeleteFiles.Lines.Delete(0);
+  end;
+end; // procedure ModeRemove
+
+procedure ModeAppend;
+begin
+  if NOT bIncIndex then
+    Insert(sSuffix, sNewFile, p1)
+  else
+    Insert(sIncSuffix, sNewFile, p1);
+end; // procedure ModeAppend;
+
+// sets sNewFile
+procedure ModeReplace;
+begin
+  if NOT bIncIndex then
+    p1 := Pos(edAppendToFilename.Text, sNewFile)
+  else
+    p1 := Pos(sIncSuffix, sNewFile);
+  if p1 > 0 then
+  begin
+    if NOT bIncIndex then
+      Delete( sNewFile, p1, Length(sSuffix))
+    else
+      Delete( sNewFile, p1, Length(sIncSuffix));
+
+    if NOT bIncIndexR then
+      Insert(edReplaceWithFilename.Text, sNewFile, p1)
+    else
+      Insert(sIncReplace, sNewFile, p1);
+  end
+  else
+  begin
+    sStatus := Format('File NOT renamed: %s ** String NOT Found.', [sFile]); // adds filename to status list
+    sStatus := Format('     --> %s', [sNewFile]); // adds filename to status list
+    Inc(iDeleteCount);
+    //sStatus := sFile;
+    edDeleteFiles.Lines.Delete(0);
+  end;
+end; // procedure ModeReplace
+
+// sets sNewFile
+procedure ModeRename;
+begin
+  if NOT bIncIndex then
+    sNewFile := sSuffix
+  else
+    sNewFIle := sIncSuffix;
+end; // ModeRename
 begin
   UpdateCaption;
   if edDeleteFiles.Lines.Count > 0 then
@@ -225,7 +394,9 @@ begin
     begin
       sStatusBar := Format('FileExists: %s', [sFile]);
 //      if cbxAppendToFilename.Checked OR cbxPrePend.Checked OR cbxRemoveString.Checked then
-      if rdMode in [rdAppend, rdPrefix, rdRemove, rdReplace] then
+
+
+      if rdMode in [rdAppend, rdPrefix, rdRemove, rdReplace, rdRename] then
       begin
         sSuffix := edAppendToFilename.Text;
         if Length(sSuffix)=0 then
@@ -234,53 +405,103 @@ begin
           sError := 'Append to Filename string is not assigned.';
           Abort;
         end;
+//        bIncIndex := False;
+
+        // suffix or prefix
+        p1 := Pos('<', sSuffix);
+        p2 := Pos('>', sSuffix);
+        if (p1>0) AND (p2>0) then
+        //if (NOT bIncIndex) AND (p1>0) AND (p2>0) then
+        begin
+          sIndex := Copy(sSuffix, Succ(p1), (Pred(p2)-p1));
+          if NOT bIncIndex then
+            iIndex := StrToInt(sIndex)
+          else
+            Inc(iIndex);
+          bIncIndex := True;
+          sIncSuffix := sSuffix;
+          Delete(sIncSuffix, p1, (p2-Pred(p1)));
+
+          // There is always better way:
+          //  Result := Format('%.*d', [len,value]);
+
+          // or      00-<01> Intro by Teachers
+          //    Result := Format('%.'+IntToStr(len)+'d', [value]);
+
+          sTemp := '%.'+IntToStr(Length(sIndex))+'d';
+          sTemp := Format(sTemp, [iIndex]);
+          Insert(sTemp, sIncSuffix, p1);
+        end;
+        // ************
+        // replace text
+        // ************
+        sReplaceText := edReplaceWithFilename.text;
+        p1 := Pos('<', sReplaceText);
+        p2 := Pos('>', sReplaceText);
+        if (p1>0) AND (p2>0) then
+        //if (NOT bIncIndex) AND (p1>0) AND (p2>0) then
+        begin
+          sIndex := Copy(sReplaceText, Succ(p1), (Pred(p2)-p1));
+          if NOT bIncIndexR then
+            iIndexReplace := StrToInt(sIndex)
+          else
+            Inc(iIndexReplace);
+          bIncIndexR := True;
+          sIncReplace := sReplaceText;
+          Delete(sIncReplace, p1, (p2-Pred(p1)));
+
+          // There is always better way:
+          //  Result := Format('%.*d', [len,value]);
+
+          // or      00-<01> Intro by Teachers
+          //    Result := Format('%.'+IntToStr(len)+'d', [value]);
+
+          sTemp := '%.'+IntToStr(Length(sIndex))+'d';
+          sTemp := Format(sTemp, [iIndexReplace]);
+          Insert(sTemp, sIncReplace, p1);
+        end;
+
         if FileExists(sFile) then
         begin
           sPath := ExtractFilePath(sFile);
           sNewFile := extractFileName(sFile);
+          // p1 is for end of file for Append...
           p1 := Pos('.', sNewFile);
+          if P1 = 0 then
+            p1 := Length(sNewFile);
+          // p1 is for Append string to file
           if (P1 > 0) OR (rdMode in [rdPrefix, rdRemove]) then // cbxPrePend.Checked OR cbxRemoveString.Checked then
           begin
             if rdMode = rdRemove then // cbxRemoveString.Checked then
             begin
-              p1 := Pos(sSuffix, sNewFile);
-              if p1>0 then
-              begin
-                Delete(sNewFile, p1, Length(sSuffix));
-              end
-              else
-              begin
-                iErr := GetLastError;
-                Inc(iErrorCount);
-                sError := Format('Error String not in File: [%d] %s', [iErr, SysErrorMessage(iErr)]);
-                sStatus := sError;
-                sStatus := Format('     %s', [sFile]); // adds filename to status list
-                edDeleteFiles.Lines.Delete(0);
-              end;
+              // Sets sNewFile
+              ModeRemove;
             end
             else
             if rdMode = rdAppend then // cbxAppendToFilename.Checked then
-              Insert(sSuffix, sNewFile, p1)
+            begin
+              // sets sNewFile
+              ModeAppend;
+            end
             else
             if rdMode = rdReplace then
             begin
-              p1 := Pos(edAppendToFilename.Text, sNewFile);
-              if p1 > 0 then
-              begin
-                Delete( sNewFile, p1, Length(edAppendToFilename.Text));
-                Insert(edReplaceWithFilename.Text, sNewFile, p1);
-              end
-              else
-              begin
-                sStatus := Format('File NOT renamed: %s ** String NOT Found.', [sFile]); // adds filename to status list
-                sStatus := Format('     --> %s', [sNewFile]); // adds filename to status list
-                Inc(iDeleteCount);
-                //sStatus := sFile;
-                edDeleteFiles.Lines.Delete(0);
-              end;
+              // sets sNewFile
+              ModeReplace;
             end
             else
-              sNewFile := Format('%s%s', [sSuffix, sNewFile]);
+            if rdMode = rdRename then
+            begin
+              // sets sNewFile
+              ModeRename;
+            end
+            else
+            begin // must be rdPrefix
+              if NOT bIncIndex then
+                sNewFile := Format('%s%s', [sSuffix, sNewFile])
+              else
+                sNewFIle := Format('%s%s', [sIncSuffix, sNewFile]);
+            end;
             sNewFile := Format('%s%s', [sPath, sNewFile]);
             if NOT FileExists(sNewFile) then
             begin
@@ -333,11 +554,57 @@ begin
         end;
       end
       else
+      if rdMode = rdChangeFileTime then
+      begin
+
+        sSuffix := edAppendToFilename.Text;
+        if Length(sSuffix)=0 then
+        begin
+          iErr := -1;
+          sError := 'Append to Filename string is not assigned.';
+          Abort;
+        end;
+//        bIncIndex := False;
+
+        // suffix or prefix
+        p1 := Pos('<', sSuffix);
+        p2 := Pos('>', sSuffix);
+        if (p1>0) AND (p2>0) then
+        //if (NOT bIncIndex) AND (p1>0) AND (p2>0) then
+        begin
+          sIndex := Copy(sSuffix, Succ(p1), (Pred(p2)-p1));
+          if NOT bIncIndex then
+            iIndex := StrToInt(sIndex)
+          else
+            Inc(iIndex);
+          bIncIndex := True;
+          sIncSuffix := sSuffix;
+          Delete(sIncSuffix, p1, (p2-Pred(p1)));
+          sTemp := '%.'+IntToStr(Length(sIndex))+'d';
+          sTemp := Format(sTemp, [iIndex]);
+          Insert(sTemp, sIncSuffix, p1);
+          sSuffix := sIncSuffix;
+        end;
+        dtNewDateTime := StrToDateTime(sSuffix); //edAppendToFilename.Text);
+        try
+          SetFileCreationTime(sFile, (dtNewDateTime));
+          except on E: Exception do
+          begin
+            iErr := GetLastError;
+            Inc(iErrorCount);
+            sError := Format('Exception: [%d] %s', [iErr, E.Message]);
+            sStatus := sError;
+            sStatus := Format('     %s', [sFile]); // adds filename to status list'
+          end;
+        end;
+        sStatus := Format('File time changed [%s]: %s', [DateTimeToStr(dtNewDateTime), sFile]); // adds filename to status list
+        edDeleteFiles.Lines.Delete(0);
+      end
+      else
       if rdMode = rdDelete then // cbxDeleteFile.Checked then
       begin
         if DeleteFile(sFile) then
         begin
-          sStatus := Format('File deleted: %s', [sFile]); // adds filename to status list
           Inc(iDeleteCount);
           //sStatus := sFile;
           edDeleteFiles.Lines.Delete(0);
