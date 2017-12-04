@@ -45,7 +45,7 @@ object Form1: TForm1
       Caption = 'Delete Files:'
       ExplicitWidth = 59
     end
-    object tpan: TSplitter
+    object Splitter: TSplitter
       Left = 0
       Top = 253
       Width = 441
@@ -65,6 +65,7 @@ object Form1: TForm1
       Height = 240
       Align = alTop
       Lines.Strings = (
+        'Paste full file paths or Drop files from Windows Explorer.'
         'Can use the following to INDEX a filename '
         
           '"<" and ">" and a number which is left padded to the length of t' +
@@ -80,15 +81,15 @@ object Form1: TForm1
         
           'For Change File DateTime, this will change Creation, Modified an' +
           'd Accessed '
-        'date to the date/time speicified...'
+        'date to the date/time speicified... Can use 24hr time or AM/PM.'
         
           'NOTE: if the file is an image, Windows will display the Date Tak' +
           'en if that'
         'property Exists.'
-        'Can use <01> in string. ZB: 12/12/2017 13:<01>:01 '
-        '(Got bugs. Time will increment from 8am )')
+        'Can use <01> in string. ZB: 12/22/2017 13:<01>:01  ')
       ScrollBars = ssBoth
       TabOrder = 0
+      ExplicitTop = 7
     end
     object Panel2: TPanel
       Left = 0
@@ -126,6 +127,7 @@ object Form1: TForm1
     Height = 25
     Anchors = [akTop, akRight]
     Caption = '&DoIt'
+    Enabled = False
     TabOrder = 2
     OnClick = btnDoItClick
     Kind = bkIgnore
@@ -136,6 +138,7 @@ object Form1: TForm1
     Width = 75
     Height = 25
     Anchors = [akTop, akRight]
+    Enabled = False
     TabOrder = 3
     OnClick = btnAbortClick
     Kind = bkAbort
